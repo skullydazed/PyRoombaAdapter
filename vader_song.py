@@ -6,14 +6,25 @@ from time import sleep
 
 from pyroombaadapter import PyRoombaAdapter
 
+vader_notes = (
+# note, duration
+    69, 40,
+    69, 40,
+    69, 40,
+    65, 30,
+    72, 10,
+    69, 40,
+    65, 30,
+    72, 10,
+    69, 80
+)
+
 PORT = "/dev/ttyUSB0"
 adapter = PyRoombaAdapter(PORT)
 adapter.change_mode_to_full()
 
 print('Sending song')
-adapter.send_song_cmd(0, 9,
-                      [69, 69, 69, 65, 72, 69, 65, 72, 69],
-                      [40, 40, 40, 30, 10, 40, 30, 10, 80])
+adapter.send_song_cmd(0, vader_notes)
 
 print('Playing song')
 adapter.send_play_cmd(0)
