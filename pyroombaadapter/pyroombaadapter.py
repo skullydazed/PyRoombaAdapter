@@ -58,33 +58,36 @@ class PyRoombaAdapter:
         "Toggle Stream": 150,
         "Buttons": 165,
     }
-
-    Packet_ID = {
-        #"": 0,
-        #"": 1,
-        #"": 2,
-        #"": 3,
-        #"": 4,
-        #"": 5,
-        #"": 6,
-        "OI Mode": 35,
-        "All Data": 100,
-        #"": 101,
-        #"": 102,
-        #"": 103,
-        #"": 104,
-        #"": 105,
-        #"": 106,
-        #"": 107,
+    commands = {
+        "Start": {'id': 128, 'format': '', },
+        "Baud": {'id': 129, 'format': '', },
+        "Control": {'id': 130, 'format': '', },
+        "Safe": {'id': 131, 'format': '', },
+        "Full": {'id': 132, 'format': '', },
+        "Power": {'id': 133, 'format': '', },
+        "Spot": {'id': 134, 'format': '', },
+        "Clean": {'id': 135, 'format': '', },
+        "Max": {'id': 136, 'format': '', },
+        "Drive": {'id': 137, 'format': '', },
+        "Moters": {'id': 138, 'format': '', },
+        "Song": {'id': 140, 'format': '', },
+        "Play": {'id': 141, 'format': '', },
+        "Sensors": {'id': 142, 'format': 'BB', },
+        "Seek Dock": {'id': 143, 'format': '', },
+        "PWM Moters": {'id': 144, 'format': '', },
+        "Drive Direct": {'id': 145, 'format': '', },
+        "Drive PWM": {'id': 146, 'format': '', },
+        "Stream": {'id': 148, 'format': '', },
+        "Query List": {'id': 149, 'format': '', },
+        "Toggle Stream": {'id': 150, 'format': '', },
+        "Buttons": {'id': 165, 'format': '', },
     }
 
-    PARAMS = {
-        "STRAIGHT_RADIUS": 32768,
-        "MIN_RADIUS": -2000,
-        "MAX_RADIUS": 2000,
-        "MIN_VELOCITY": -500,
-        "MAX_VELOCITY": 500,
-    }
+    STRAIGHT_RADIUS = 32768
+    MIN_RADIUS = -2000
+    MAX_RADIUS = 2000
+    MIN_VELOCITY = -500
+    MAX_VELOCITY = 500
 
     def __init__(self, port, baudrate=115200, timeout_sec=None, wheel_span_mm=235.0, sensor_list=sensors.DEFAULT_SENSORS):
         self._read_thread = None
@@ -110,86 +113,67 @@ class PyRoombaAdapter:
         The Destructor make Roomba move to passive mode and close serial connection
         """
         # disconnect sequence
-        self.change_mode_to_passive()
+        self.turn_off_power()
         sleep(0.1)
         self.serial_port.close()
 
-## From pyroomba unedited
-    def send(self, format, *args):
+    def send_cmd(self, command, *args, format=None):
         """Send a command to the robot.
+        """
+        if not format:
+            format = self.commands[command]['format']
 
-        This is basically a wrapper around self.port.write and struct.pack"""
+        self.send_struct(format, self.commands[command]['id'], *args)
+
+    def send_struct(self, format, *args):
+        """Send a struct packed command to the robot.
+        """
         self.serial_port.write(struct.pack(format, *args))
-
-    def _read_sensor_list(self, sensors):
-        """Reads a list of sensor values and returns the associated dictionary"""
-        #packet_list = [ packet for packet, format, name in sensors ]
-        formats = [ format for packet, format, name in sensors ]
-        names = [ name for packet, format, name in sensors ]
-
-        response_format = '>' + ''.join(formats)
-        response = self.serial_port.read(struct.calcsize(response_format))
-
-        #try:
-        values = struct.unpack(response_format, response)
-        return dict(zip(names, values))
-        #except struct.error:
-            #return {}
-
-    def sensors(self, sensor):
-        """Request a single sensor packet"""
-        sensor_id, format, name = sensor
-        self.send('BB', 142, sensor_id)
-        # It's ugly to check for things like this
-        if isinstance(format, str):
-            format = '>' + format
-            return self.serial_port.read(struct.calcsize(format))
-        elif isinstance(format, list):
-            # Some packets return a list of results (particularly on SCI robots)
-            return self._read_sensor_list(format)
-        else:
-            raise 'Unknown sensor format type'
 
     def stream_samples(self, *sensors):
         """Starts streaming sensor data from the Roomba at a rate of one reading every 15ms (the Roomba's internal update rate).
         """
-        packet_list = [ packet for packet, format, name in sensors ]
+        packet_list = [sensor[0] for sensor in sensors]
         count = len(packet_list)
         format = 'BB' + ('B' * count)
-        self.send(format, 148, count, *packet_list)
+        self.send_cmd('Stream', count, *packet_list, format=format)
 
     def pause_stream(self):
         """Pauses the sample stream (if any) coming from the Roomba"""
-        self.send('BB', 150, 0)
+        self.send_cmd('Toggle Stream', 0)
         sleep(0.1)
         self.serial_port.flushInput()
 
 
     def resume_stream(self):
-        """Resumes the sample stream with the previously requested set of sensors"""
-        self.send('BB', 150, 1)
+        """Resumes the sample stream with the previously requested set of sensors.
+        """
+        self.send_cmd('Toggle Stream', 1)
 
 
     def poll(self):
-        """Reads a single sample from the current sample stream."""
-        # Samples always start with a 19 (decimal) followed by a byte indicating the length of the message
+        """Reads a single sample from the current sample stream.
+        """
+        # Wait for the first byte of a packet (19)
         magic = ord(self.serial_port.read())
         while magic != 19:
-            # We're out of sync. Read until we get our magic (which might
-            # occur mid-packet, so we may not resync, but in that case the
-            # checksum should be bad and we'll ditch everything, we hope.)
             magic = ord(self.serial_port.read())
-        length = ord(self.serial_port.read()) + 1 # Bytes left to read (plus checksum)
+
+        # Read the length of the packet, which is always the next byte.
+        length = ord(self.serial_port.read()) + 1
+
+        # Read in the packet.
         packet = self.serial_port.read(length)
-        # Roomba OI documentaiton is wrong, Checksum includes 19 magic (-1 for extra length byte)
+
+        # Validate the checksum.
         if (sum(struct.unpack('B' * length, packet), length + 18) & 0xff) != 0:
-            # Bad checksum. Ditch everything in the input buffer
-            self.serial_port.flushInput()
             print('*** Bad checksum while attempting to read sample!')
             return
 
-        packet = packet[0:-1] # Strip off checksum
+        # Extract readings from the packet
+        packet = packet[0:-1]
         readings = {}
+
         while len(packet) != 0:
             sensor_id = packet[0]
             id, format, name = sensors.SENSOR_ID_MAP[sensor_id]
@@ -197,8 +181,8 @@ class PyRoombaAdapter:
             value = struct.unpack(format, packet[1:1+size])
             readings[name] = value[0]
             packet = packet[1+size:]
+
         return readings
-## end from pyroomba unedited
 
     def start_cleaning(self):
         """
@@ -368,7 +352,7 @@ class PyRoombaAdapter:
                 radius_mm = -1
         elif yaw_rate == 0:
             vel_mm_sec = velocity * 1000.0  # m/s -> mm/s
-            radius_mm = self.PARAMS["STRAIGHT_RADIUS"]
+            radius_mm = self.STRAIGHT_RADIUS
         else:
             vel_mm_sec = velocity * 1000.0  # m/s -> mm/s
             radius_mm = vel_mm_sec / yaw_rate
@@ -398,10 +382,10 @@ class PyRoombaAdapter:
         """
         # print(roomba_mm_sec, roomba_radius_mm, turn_dir)
 
-        roomba_mm_sec = self._adjust_min_max(roomba_mm_sec, self.PARAMS["MIN_VELOCITY"], self.PARAMS["MAX_VELOCITY"])
+        roomba_mm_sec = self._adjust_min_max(roomba_mm_sec, self.MIN_VELOCITY, self.MAX_VELOCITY)
         velHighVal, velLowVal = self._get_2_bytes(roomba_mm_sec)
 
-        roomba_radius_mm = self._adjust_min_max(roomba_radius_mm, self.PARAMS["MIN_RADIUS"], self.PARAMS["MAX_RADIUS"])
+        roomba_radius_mm = self._adjust_min_max(roomba_radius_mm, self.MIN_RADIUS, self.MAX_RADIUS)
         radiusHighVal, radiusLowVal = self._get_2_bytes(roomba_radius_mm)
 
         # send these bytes and set the stored velocities
@@ -426,10 +410,10 @@ class PyRoombaAdapter:
             >>> adapter.send_drive_direct(10, 100) # move right forward
             >>> sleep(2.0) # keep 2 sec
         """
-        right_mm_sec = self._adjust_min_max(right_mm_sec, self.PARAMS["MIN_VELOCITY"], self.PARAMS["MAX_VELOCITY"])
+        right_mm_sec = self._adjust_min_max(right_mm_sec, self.MIN_VELOCITY, self.MAX_VELOCITY)
         right_high, right_low = byte_tool.get_2_bytes(right_mm_sec)
 
-        left_mm_sec = self._adjust_min_max(left_mm_sec, self.PARAMS["MIN_VELOCITY"], self.PARAMS["MAX_VELOCITY"])
+        left_mm_sec = self._adjust_min_max(left_mm_sec, self.MIN_VELOCITY, self.MAX_VELOCITY)
         left_high, left_low = byte_tool.get_2_bytes(left_mm_sec)
 
         # send these bytes and set the stored velocities
