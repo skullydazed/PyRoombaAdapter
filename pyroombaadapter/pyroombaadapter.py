@@ -12,6 +12,7 @@ from time import sleep, time
 
 import serial  # pyserial
 
+from . import music
 from . import sensors
 
 
@@ -34,7 +35,7 @@ class PyRoombaAdapter:
         >>> adapter = PyRoombaAdapter(PORT)
 
     """
-    # Commands that can be executea. The key is a plain-text command name. Values:
+    # Commands that can be executed. The key is a plain-text command name. Values:
     #     :param int id: The number Roomba expects to receive to invoke this command.
     #     :param str format: The struct.pack() format for this command and any arguments you need to pass. Use None if the format has to be built dynamically.
     commands = {
@@ -79,11 +80,9 @@ class PyRoombaAdapter:
             print("Cannot find serial port. Plase reconnect it.")
             sys.exit(1)
 
-        #self.stream_samples(sensors.TEMPERATURE)
         self.stream_samples(*sensor_list)
         self.read_background()
         self.change_mode_to_passive()
-        #self.change_mode_to_safe()
         sleep(0.5)
 
     def __del__(self):
@@ -555,48 +554,59 @@ class PyRoombaAdapter:
 
         self.send_cmd("Buttons", buttons)
 
-    def send_song_cmd(self, song_number, note_list):
+    def scale_bpm(self, bpm_scale):
+        """Adjust BPM for all future songs.
+
+        This function will adjust the BPM for all future songs. Songs that have already been stored are not affected. Lower numbers are faster. You can use 1-14 here, with higher numbers resulting in a slower tempo. The math says 1 should be 960 bpm and 14 should be 68 bpm, but 14 seems to be somewhere around 30 or 40 bpm.
         """
-        Send song command
+        music.scale_bpm(bpm_scale)
 
-        This command lets you specify up to four songs to the OI that you can play at a later time. Each song is associated with a song number. The Play command uses the song number to identify your song selection.
+    def send_song_cmd(self, song_number, note_list, bpm_scale=None):
+        """Send song command.
 
-        Each song can contain up to sixteen notes. Each note is associated with a note number that uses MIDI note definitions and a duration that is specified in fractions of a second.
+        This command lets you specify up to four songs to the OI that you can play at a later time. Each song can contain up to sixteen notes. Each song is associated with a song number. The Play command uses the song number to identify your song selection.
+
+        If you pass `bpm_scale` this function will adjust the BPM for all future songs. Songs that have already been stored are not affected. Lower numbers are faster. You can use 1-14 here, with higher numbers resulting in a slower tempo. The math says 1 should be 960 bpm and 14 should be 68 bpm, but 14 seems to be somewhere around 30 or 40 bpm.
 
         - Available in modes: Passive, Safe, or Full
 
         :param int song_number: (0-4) The song number associated with the specific song.
                         If you send a second Song command, using the same song number, the old song is overwritten.
 
-        :param list note_list: A collapsed list of note/duration bytes to play. Every even value defines a pitch to play. Every odd value defines how long to play the previous pitch.
-                               Note Number (31 – 127) The pitch of the musical note Roomba will play, according to the MIDI note numbering scheme.
-                               Roomba considers all musical notes outside the range of 31 – 127 as rest notes, and will make no sound during the duration of those notes.
-                               Note Duration (0 – 255) The duration of a musical note, in increments of 1/64th of a second. Example: a half-second long musical note has a duration value of 32.
+        :param list note_list: A collapsed list of note/duration bytes to play. Every even value defines a note to play. Every odd value defines what kind of note (1/4, 1/2, etc) it is.
+                               Note: A string describing the note and octave to play. Examples: 'C4', 'Bb5', 'D#4', 'rest'
+                               Beats: A string desicrbing the note as a fraction. Prepend 'd' for a dotted note. Examples: '1/4', 'd1/8', '1'
+
+        :param int bpm_scale: (1-14) The scale factor to apply to note length. Lower numbers result in faster songs.
 
         Examples:
             >>> adapter = PyRoombaAdapter("/dev/ttyUSB0")
-            >>> # note names
-            >>> f4 = 65
-            >>> a4 = 69
-            >>> c5 = 72
-            >>> # note lengths
-            >>> MEASURE = 160
-            >>> HALF = int(MEASURE / 2)
-            >>> Q = int(MEASURE / 4)
-            >>> Ed = int(MEASURE * 3 / 16)
-            >>> S = int(MEASURE / 16)
-            >>> adapter.send_song_cmd(0, 9,
-            >>>             [a4, Q, a4, Q, a4, Q, f4, Ed, c5, S, a4, Q, f4, Ed, c5, S, a4, HALF]) # set song
+            >>> song = [
+            ...     'A4', '1/4',
+            ...     'A4', '1/4',
+            ...     'A4', '1/4',
+            ...     'F4', 'd1/8',
+            ...     'C5', '1/16',
+            ...     'A4', '1/4',
+            ...     'F4', 'd1/8',
+            ...     'C5', '1/16',
+            ...     'A4', '1/2',
+            ... ]
+            >>> adapter.send_song_cmd(0, song)
             >>> adapter.send_play_cmd(0) # play song
             >>> sleep(10.0) # keep playing
         """
         if len(note_list) % 2 != 0:
             raise ValueError('note_list must have an even number of elements!')
 
+        if bpm_scale:
+            music.scale_bpm(bpm_scale)
+
+        song = music.notes_to_song(note_list)
         song_length = int(len(note_list) / 2)
         format = 'B' * (len(note_list) + 3)
 
-        self.send_cmd('Song', song_number, song_length, *note_list, format=format)
+        self.send_cmd('Song', song_number, song_length, *song, format=format)
 
     def send_play_cmd(self, song_number):
         """
