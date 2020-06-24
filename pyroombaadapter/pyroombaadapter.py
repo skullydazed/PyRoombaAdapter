@@ -83,8 +83,8 @@ class PyRoombaAdapter:
         self.stream_samples(*sensor_list)
         self.read_background()
         self.change_mode_to_passive()
-        self.change_mode_to_safe()
-        sleep(1.0)
+        #self.change_mode_to_safe()
+        sleep(0.5)
 
     def __del__(self):
         """
@@ -157,7 +157,7 @@ class PyRoombaAdapter:
 
         # Validate the checksum.
         if (sum(struct.unpack('B' * length, packet), length + 18) & 0xff) != 0:
-            print('*** Bad checksum while attempting to read sample!')
+            #print('*** Bad checksum while attempting to read sample!')
             return
 
         # Extract readings from the packet
@@ -306,6 +306,11 @@ class PyRoombaAdapter:
             self._read_thread = Thread(target=self.read_forever, name='serial_read', daemon=True)
             self._read_thread.start()
 
+    def stop(self):
+        """Stops movement of the robot.
+        """
+        self.move(0, 0)
+
     def move(self, velocity, yaw_rate):
         """
         control roomba at the velocity and the rotational speed (yaw rate)
@@ -349,7 +354,7 @@ class PyRoombaAdapter:
 
         self.send_drive_cmd(vel_mm_sec, radius_mm)
 
-    def send_drive_cmd(self, roomba_mm_sec, roomba_radius_mm, turn_in_place='no', drive_straight=False):
+    def send_drive_cmd(self, roomba_mm_sec, roomba_radius_mm=None, turn_in_place='no', drive_straight=False):
         """Control the Roomba’s drive wheels.
 
         The radius is measured from the center of the turning circle to the center of Roomba.
@@ -373,6 +378,9 @@ class PyRoombaAdapter:
             >>> sleep(2.0) # keep 2 sec
         """
         # Sanity checks
+        if not roomba_radius_mm and not drive_straight and turn_in_place == 'no':
+            raise ValueError('roomba_radius_mm is required!')
+
         if drive_straight and turn_in_place != 'no':
             raise ValueError('drive_straight and turn_in_place are mutually exclusive!')
 
