@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Play Darth Vader song
+"""Vader's Theme, composed by John Williams.
+
+Adapted for Roomba by Zach White.
 """
 from time import sleep
 
